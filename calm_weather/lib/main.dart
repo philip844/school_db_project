@@ -1,10 +1,43 @@
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
+import 'dart:async';
+import 'package:intl/intl.dart'; 
+
+// ------------------------------------
+// NEW: Mock Authentication Service
+// ------------------------------------
+class AuthService {
+  final StreamController<bool> _authStateController = StreamController<bool>.broadcast();
+  Stream<bool> get authStateChanges => _authStateController.stream;
+
+  AuthService() {
+    // We already added the initial state in the constructor
+    _authStateController.add(false); 
+  }
+
+  Future<void> signIn(String email, String password) async {
+    await Future.delayed(const Duration(seconds: 1));
+    
+    if (email.isNotEmpty && password.isNotEmpty) {
+      _authStateController.add(true);
+    } else {
+      throw 'Invalid credentials. Please use mock data.';
+    }
+  }
+
+  void signOut() {
+    _authStateController.add(false);
+  }
+
+  void dispose() {
+    _authStateController.close();
+  }
+}
+// ------------------------------------
+
+final AuthService _authService = AuthService();
 
 void main() {
   runApp(const WeatherApp());
@@ -19,15 +52,403 @@ class WeatherApp extends StatelessWidget {
       title: 'Mobile Weather App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // Set a calm base color
         primarySwatch: Colors.blueGrey,
         fontFamily: 'Inter',
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const WeatherScreen(),
+      home: StreamBuilder<bool>(
+        // FIX: Added initialData to prevent the app from getting stuck in the 'waiting' state
+        initialData: false, 
+        stream: _authService.authStateChanges,
+        builder: (context, snapshot) {
+          // If we have data, show the appropriate screen immediately
+          if (snapshot.hasData) {
+            final isLoggedIn = snapshot.data!;
+            if (isLoggedIn) {
+              return const WeatherScreen();
+            } else {
+              return const AuthScreen(); 
+            }
+          }
+          // Fallback loader if there's no data (should not happen with initialData set)
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+            backgroundColor: Color(0xFF88A9C3),
+          );
+        },
+      ),
     );
   }
 }
+
+// ------------------------------------
+// UPDATED: Authentication Screen (Refined UI and Added Forgot Password Flow)
+// ------------------------------------
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({super.key});
+
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  
+  // Controllers for the Forgot Password flow
+  final TextEditingController _resetEmailController = TextEditingController();
+  final TextEditingController _resetCodeController = TextEditingController();
+  final TextEditingController _newPasswordController = TextEditingController();
+
+  bool _isLoading = false;
+  String? _error;
+  
+  // --- Calm Color Palette ---
+  static const Color _calmStartBlue = Color(0xFF88A9C3); 
+  static const Color _calmEndBlue = Color(0xFFC7D7E3); 
+  static const Color _calmAccentTeal = Color(0xFF5B9B9D); 
+  static const Color _calmDarkBlue = Color(0xFF4C7B8F); 
+  static const Color _calmPrimaryTextColor = Color(0xFF333D47); 
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _resetEmailController.dispose();
+    _resetCodeController.dispose();
+    _newPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      // NOTE: This is a mock login. Any non-empty email/password will work.
+      await _authService.signIn(_emailController.text.trim(), _passwordController.text.trim());
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _forgotPasswordFlow() async {
+    String message = '';
+    
+    // Step 1: Request Email and Send Code
+    await showDialog(
+      context: context,
+      builder: (context) => _buildResetDialog(
+        context,
+        title: 'Reset Password (Step 1 of 3)',
+        controller: _resetEmailController,
+        labelText: 'Email Address',
+        hintText: 'Enter your email for the code',
+        keyboardType: TextInputType.emailAddress,
+        nextButtonText: 'Send Code',
+        onNext: () async {
+          if (_resetEmailController.text.isEmpty) {
+            message = 'Please enter an email.';
+            return false;
+          }
+          await Future.delayed(const Duration(seconds: 1));
+          message = 'Verification code simulated and sent!';
+          return true;
+        },
+      ),
+    );
+
+    if (!message.contains('sent')) return;
+    
+    // Step 2: Verify Code
+    await showDialog(
+      context: context,
+      builder: (context) => _buildResetDialog(
+        context,
+        title: 'Reset Password (Step 2 of 3)',
+        controller: _resetCodeController,
+        labelText: 'Verification Code',
+        hintText: 'Enter the 6-digit code',
+        keyboardType: TextInputType.number,
+        nextButtonText: 'Verify Code',
+        onNext: () async {
+          if (_resetCodeController.text != '123456') { // Mock code: 123456
+            message = 'Invalid code. Try 123456.';
+            return false;
+          }
+          await Future.delayed(const Duration(seconds: 1));
+          message = 'Code verified!';
+          return true;
+        },
+      ),
+    );
+
+    if (!message.contains('verified')) return;
+
+    // Step 3: Set New Password
+    await showDialog(
+      context: context,
+      builder: (context) => _buildResetDialog(
+        context,
+        title: 'Reset Password (Step 3 of 3)',
+        controller: _newPasswordController,
+        labelText: 'New Password',
+        hintText: 'Enter your new password',
+        obscureText: true,
+        keyboardType: TextInputType.visiblePassword,
+        nextButtonText: 'Reset Password',
+        onNext: () async {
+          if (_newPasswordController.text.length < 6) {
+            message = 'Password must be at least 6 characters.';
+            return false;
+          }
+          await Future.delayed(const Duration(seconds: 1));
+          message = 'Password successfully reset!';
+          return true;
+        },
+      ),
+    );
+    
+    // Final confirmation message
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+    
+    // Clear mock controllers
+    _resetEmailController.clear();
+    _resetCodeController.clear();
+    _newPasswordController.clear();
+  }
+
+  // Helper widget for the multi-step modal dialog
+  Widget _buildResetDialog(
+    BuildContext context, {
+    required String title,
+    required TextEditingController controller,
+    required String labelText,
+    required String hintText,
+    required String nextButtonText,
+    required Future<bool> Function() onNext,
+    TextInputType keyboardType = TextInputType.text,
+    bool obscureText = false,
+  }) {
+    String currentError = '';
+    bool isProcessing = false;
+
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          backgroundColor: _calmEndBlue.withOpacity(0.95), // Light, calm background
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text(title, style: TextStyle(color: _calmDarkBlue, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                keyboardType: keyboardType,
+                obscureText: obscureText,
+                decoration: _buildInputDecoration(labelText, Icons.vpn_key),
+                style: TextStyle(color: _calmPrimaryTextColor),
+              ),
+              if (currentError.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10.0),
+                  child: Text(
+                    currentError,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancel', style: TextStyle(color: _calmDarkBlue)),
+            ),
+            ElevatedButton(
+              onPressed: isProcessing ? null : () async {
+                setState(() => isProcessing = true);
+                currentError = '';
+                if (await onNext()) {
+                  if (mounted) Navigator.of(context).pop();
+                } else {
+                  // Error message is set inside the onNext function, retrieve and display it
+                  currentError = (await Future.value(null)); 
+                  // Placeholder: Since onNext doesn't return the error, we use the message set in the main function.
+                  // For a real app, the error message would be returned/passed back here.
+                }
+                setState(() => isProcessing = false);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _calmAccentTeal,
+              ),
+              child: isProcessing 
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : Text(nextButtonText, style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_calmStartBlue, _calmEndBlue], 
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Title
+                const Center(
+                  child: Text(
+                    'Welcome Back',
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 60),
+                
+                // Email Field (Full Width, Clean Look)
+                TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  style: TextStyle(color: _calmPrimaryTextColor),
+                  decoration: _buildInputDecoration(
+                    'Email', 
+                    Icons.email_outlined, 
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Password Field (Full Width, Clean Look)
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  style: TextStyle(color: _calmPrimaryTextColor),
+                  decoration: _buildInputDecoration(
+                    'Password', 
+                    Icons.lock_outline, 
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Forgot Password Link (UPDATED ACTION)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _forgotPasswordFlow,
+                    child: Text(
+                      'Forgot Password?',
+                      style: TextStyle(color: _calmDarkBlue, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 30),
+
+                // Error Display
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20.0),
+                    child: Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+
+                // Login Button
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _login,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _calmAccentTeal, // Calm accent color
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    elevation: 5,
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 3,
+                          ),
+                        )
+                      : const Text(
+                          'LOGIN',
+                          style: TextStyle(
+                            fontSize: 18, 
+                            fontWeight: FontWeight.bold, 
+                            color: Colors.white
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // Helper for consistent input styling (Mimics the clean, full-width look)
+  InputDecoration _buildInputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: TextStyle(color: _calmPrimaryTextColor.withOpacity(0.7)),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.85), // Soft white fill
+      prefixIcon: Icon(icon, color: _calmDarkBlue),
+      contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 15),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.2), width: 1), 
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.4), width: 1), // Soft white outline
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: _calmAccentTeal, width: 2), // Teal border when focused
+      ),
+    );
+  }
+}
+// ------------------------------------
+// END UPDATED: Authentication Screen
+// ------------------------------------
+
+
+// ------------------------------------
+// START: Weather Screen (No changes needed)
+// ------------------------------------
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -44,23 +465,17 @@ class _WeatherScreenState extends State<WeatherScreen> {
   String? _error;
   DateTime _currentTime = DateTime.now();
   late Timer _timer;
-
+  
   // New state for search functionality
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
 
   // --- Calm Color Palette ---
   static const Color _calmStartBlue = Color(0xFF88A9C3); // Soft blue/gray
-  static const Color _calmEndBlue = Color(0xFFC7D7E3); // Very light, cool blue
-  static const Color _calmAccentTeal = Color(
-    0xFF5B9B9D,
-  ); // Muted Teal/Blue for buttons/icons
-  static const Color _calmIconYellow = Color(
-    0xFFFFDAA3,
-  ); // Soft Pale Gold for sun/brightness
-  static const Color _calmDarkBlue = Color(
-    0xFF4C7B8F,
-  ); // Darker muted blue-green for contrast
+  static const Color _calmEndBlue = Color(0xFFC7D7E3);   // Very light, cool blue
+  static const Color _calmAccentTeal = Color(0xFF5B9B9D); // Muted Teal/Blue for buttons/icons
+  static const Color _calmIconYellow = Color(0xFFFFDAA3); // Soft Pale Gold for sun/brightness
+  static const Color _calmDarkBlue = Color(0xFF4C7B8F); // Darker muted blue-green for contrast
 
   @override
   void initState() {
@@ -109,11 +524,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
     try {
       final position = await _determinePosition();
-      await _fetchWeather(
-        position.latitude,
-        position.longitude,
-        isGeolocation: true,
-      );
+      await _fetchWeather(position.latitude, position.longitude, isGeolocation: true);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -133,25 +544,24 @@ class _WeatherScreenState extends State<WeatherScreen> {
       _error = null;
       _locationName = "Searching for $city...";
     });
-
+    
     // Forward Geocoding using Nominatim
     try {
-      final response = await http.get(
-        Uri.parse(
-          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(city)}&format=json&limit=1',
-        ),
-      );
+      final response = await http.get(Uri.parse(
+          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(city)}}&format=json&limit=1'
+      ));
 
       if (response.statusCode == 200) {
         final List results = json.decode(response.body);
         if (results.isNotEmpty) {
           final lat = double.parse(results[0]['lat']);
           final lon = double.parse(results[0]['lon']);
-
+          
           await _fetchWeather(lat, lon);
 
           // After successful search, close the search bar
           if (mounted) _toggleSearch();
+
         } else {
           throw 'City not found: $city';
         }
@@ -191,40 +601,25 @@ class _WeatherScreenState extends State<WeatherScreen> {
       throw 'Location permissions are permanently denied. Please enable them in settings.';
     }
 
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.low,
-    );
+    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.low);
   }
 
   /// Fetches a human-readable location name using reverse geocoding.
-  Future<void> _fetchLocationName(
-    double lat,
-    double lon, {
-    bool isGeolocation = false,
-  }) async {
+  Future<void> _fetchLocationName(double lat, double lon, {bool isGeolocation = false}) async {
     // If the location was found via search, we already have a clean city name.
     if (!isGeolocation && _locationName.startsWith('Searching')) {
-      return;
+      return; 
     }
 
     try {
       // Using OpenStreetMap Nominatim for reverse geocoding (free, no key)
-      final response = await http.get(
-        Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon',
-        ),
-      );
-
+      final response = await http.get(Uri.parse('https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon'));
+      
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final address = data['address'] ?? {};
-
-        final city =
-            address['city'] ??
-            address['town'] ??
-            address['village'] ??
-            address['county'] ??
-            "Unknown Location";
+        
+        final city = address['city'] ?? address['town'] ?? address['village'] ?? address['county'] ?? "Unknown Location";
         if (mounted) {
           setState(() {
             _locationName = city;
@@ -234,39 +629,33 @@ class _WeatherScreenState extends State<WeatherScreen> {
         // Fallback to coordinates on API failure
         if (mounted) {
           setState(() {
-            _locationName =
-                '${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)}';
+            _locationName = '${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)}';
           });
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _locationName =
-              '${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)}';
+          _locationName = '${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)}';
         });
       }
-      debugPrint("Failed to get city name: $e");
+      print("Failed to get city name: $e");
     }
   }
 
   /// Fetches weather data from Open-Meteo, including current and daily forecast.
-  Future<void> _fetchWeather(
-    double lat,
-    double lon, {
-    bool isGeolocation = false,
-  }) async {
+  Future<void> _fetchWeather(double lat, double lon, {bool isGeolocation = false}) async {
     try {
       // UPDATED API CALL: Added 'daily=...' for 5-day forecast
       final url = Uri.parse(
-        'https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5&timezone=auto',
+          'https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5&timezone=auto'
       );
-
+      
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
+        
         // Process daily forecast data
         List<Map<String, dynamic>> dailyData = [];
         final daily = data['daily'];
@@ -282,18 +671,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
             });
           }
         }
-
+        
         if (mounted) {
           setState(() {
             _weatherData = data['current'];
             _dailyForecast = dailyData; // Store the processed daily data
             _isLoading = false;
           });
-          _fetchLocationName(
-            lat,
-            lon,
-            isGeolocation: isGeolocation,
-          ); // Fetch location name after weather data
+          _fetchLocationName(lat, lon, isGeolocation: isGeolocation); // Fetch location name after weather data
         }
       } else {
         throw 'Failed to load weather data with status: ${response.statusCode}';
@@ -351,23 +736,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
   // Converts WMO code to a description string
   String _getWeatherDescription(int code) {
     const Map<int, String> codes = {
-      0: "Clear Sky",
-      1: "Mainly Clear",
-      2: "Partly Cloudy",
-      3: "Overcast",
-      45: "Foggy",
-      48: "Rime Fog",
-      51: "Light Drizzle",
-      53: "Moderate Drizzle",
-      55: "Dense Drizzle",
-      61: "Slight Rain",
-      63: "Moderate Rain",
-      65: "Heavy Rain",
-      71: "Slight Snow",
-      73: "Moderate Snow",
-      75: "Heavy Snow",
-      95: "Thunderstorm",
-      96: "Thunderstorm & Hail",
+      0: "Clear Sky", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+      45: "Foggy", 48: "Rime Fog", 51: "Light Drizzle", 53: "Moderate Drizzle", 
+      55: "Dense Drizzle", 61: "Slight Rain", 63: "Moderate Rain", 65: "Heavy Rain",
+      71: "Slight Snow", 73: "Moderate Snow", 75: "Heavy Snow", 95: "Thunderstorm", 
+      96: "Thunderstorm & Hail"
     };
     return codes[code] ?? "Unknown";
   }
@@ -377,18 +750,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
   @override
   Widget build(BuildContext context) {
     final weather = _weatherData;
-    final int temp = weather != null
-        ? weather['temperature_2m']?.round() ?? 0
-        : 0;
-    final int windSpeed = weather != null
-        ? weather['wind_speed_10m']?.round() ?? 0
-        : 0;
-    final int humidity = weather != null
-        ? weather['relative_humidity_2m']?.round() ?? 0
-        : 0;
-    final int feelsLike = weather != null
-        ? weather['apparent_temperature']?.round() ?? 0
-        : 0;
+    final int temp = weather != null ? weather['temperature_2m']?.round() ?? 0 : 0;
+    final int windSpeed = weather != null ? weather['wind_speed_10m']?.round() ?? 0 : 0;
+    final int humidity = weather != null ? weather['relative_humidity_2m']?.round() ?? 0 : 0;
+    final int feelsLike = weather != null ? weather['apparent_temperature']?.round() ?? 0 : 0;
     final int weatherCode = weather != null ? weather['weather_code'] ?? 0 : 0;
     final int isDay = weather != null ? weather['is_day'] ?? 1 : 1;
 
@@ -404,15 +769,14 @@ class _WeatherScreenState extends State<WeatherScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [_calmStartBlue, _calmEndBlue],
+                colors: [_calmStartBlue, _calmEndBlue], 
               ),
             ),
           ),
 
           // Main Content
           SafeArea(
-            child: SingleChildScrollView(
-              // Allow scrolling for the new forecast section
+            child: SingleChildScrollView( // Allow scrolling for the new forecast section
               padding: const EdgeInsets.all(24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -420,32 +784,26 @@ class _WeatherScreenState extends State<WeatherScreen> {
                   // Header (Location & Time) OR Search Bar
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
-                    child: _isSearching
-                        ? _buildSearchBar()
+                    child: _isSearching 
+                        ? _buildSearchBar() 
                         : _buildHeader(timeFormat.format(_currentTime)),
                   ),
                   const SizedBox(height: 16), // Spacing after header
+
                   // Current Weather Section (Central)
                   SizedBox(
-                    height:
-                        MediaQuery.of(context).size.height *
-                        0.6, // Allocate space for current weather
+                    height: MediaQuery.of(context).size.height * 0.6, // Allocate space for current weather
                     child: Center(
                       child: _buildBody(
-                        temp,
-                        windSpeed,
-                        humidity,
-                        feelsLike,
-                        weatherCode,
-                        isDay,
-                        dateFormat.format(_currentTime),
+                        temp, windSpeed, humidity, feelsLike, weatherCode, isDay, dateFormat.format(_currentTime)
                       ),
                     ),
                   ),
-
+                  
                   // Daily Forecast Section (NEW)
                   if (_dailyForecast != null && _weatherData != null)
                     _buildDailyForecast(),
+
                 ],
               ),
             ),
@@ -456,37 +814,47 @@ class _WeatherScreenState extends State<WeatherScreen> {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Search Button (New)
+          // Logout Button (NEW: Added to Weather Screen)
+          FloatingActionButton(
+            onPressed: () {
+              // Sign out the user
+              _authService.signOut();
+            },
+            heroTag: 'logoutBtn',
+            backgroundColor: Colors.redAccent,
+            elevation: 8,
+            shape: const CircleBorder(),
+            child: const Icon(Icons.logout, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 16),
+
+          // Search Button 
           FloatingActionButton(
             onPressed: _toggleSearch,
             heroTag: 'searchBtn',
-            backgroundColor: _isSearching ? Colors.redAccent : _calmAccentTeal,
+            backgroundColor: _isSearching ? Colors.redAccent : _calmAccentTeal, 
             elevation: 8,
             shape: const CircleBorder(),
-            child: Icon(
-              _isSearching ? Icons.close : Icons.search,
-              color: Colors.white,
-              size: 24,
-            ),
+            child: Icon(_isSearching ? Icons.close : Icons.search, color: Colors.white, size: 24),
           ),
           const SizedBox(height: 16),
           // Location Button (Existing)
           FloatingActionButton(
             onPressed: _isLoading ? null : _handleLocationClick,
             heroTag: 'locationBtn',
-            backgroundColor: _calmAccentTeal,
+            backgroundColor: _calmAccentTeal, 
             elevation: 8,
             shape: const CircleBorder(),
             child: _isLoading && !_isSearching
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Colors.white,
-                    ),
+              ? const SizedBox(
+                  width: 24, 
+                  height: 24, 
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3, 
+                    color: Colors.white
                   )
-                : const Icon(Icons.my_location, color: Colors.white, size: 24),
+                )
+              : const Icon(Icons.my_location, color: Colors.white, size: 24),
           ),
         ],
       ),
@@ -503,7 +871,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.1),
+            color: Colors.black.withOpacity(0.1),
             borderRadius: BorderRadius.circular(30),
           ),
           child: Row(
@@ -513,11 +881,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
               const SizedBox(width: 6),
               Text(
                 _locationName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
               ),
             ],
           ),
@@ -529,11 +893,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
             const SizedBox(width: 6),
             Text(
               timeString,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -546,11 +906,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
       key: const ValueKey('search'),
       height: 50,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.9),
+        color: Colors.white.withOpacity(0.9),
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
+            color: Colors.black.withOpacity(0.1),
             blurRadius: 10,
             offset: const Offset(0, 5),
           ),
@@ -564,14 +924,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
         style: TextStyle(color: _calmDarkBlue),
         decoration: InputDecoration(
           hintText: 'Search city...',
-          hintStyle: TextStyle(color: _calmDarkBlue.withValues(alpha: 0.6)),
+          hintStyle: TextStyle(color: _calmDarkBlue.withOpacity(0.6)),
           border: InputBorder.none,
           prefixIcon: Icon(Icons.search, color: _calmDarkBlue),
           suffixIcon: IconButton(
-            icon: Icon(
-              Icons.clear,
-              color: _calmDarkBlue.withValues(alpha: 0.6),
-            ),
+            icon: Icon(Icons.clear, color: _calmDarkBlue.withOpacity(0.6)),
             onPressed: () {
               _searchController.clear();
             },
@@ -583,18 +940,18 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _buildBody(
-    int temp,
-    int windSpeed,
-    int humidity,
-    int feelsLike,
-    int weatherCode,
+    int temp, 
+    int windSpeed, 
+    int humidity, 
+    int feelsLike, 
+    int weatherCode, 
     int isDay,
-    String dateString,
+    String dateString
   ) {
     if (_error != null) {
       return _buildErrorWidget();
     }
-
+    
     if (_isLoading || _weatherData == null) {
       return _buildLoadingWidget();
     }
@@ -606,19 +963,13 @@ class _WeatherScreenState extends State<WeatherScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(
-              alpha: 0.1,
-            ), // Darker background for light theme
+            color: Colors.black.withOpacity(0.1), // Darker background for light theme
             borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
           ),
           child: Text(
             dateString,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
           ),
         ),
         const SizedBox(height: 32),
@@ -626,7 +977,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         // Main Icon (CALM ICON YELLOW)
         Icon(
           _getWeatherIcon(weatherCode, isDay),
-          color: _calmIconYellow,
+          color: _calmIconYellow, 
           size: 100,
         ),
         const SizedBox(height: 24),
@@ -639,23 +990,16 @@ class _WeatherScreenState extends State<WeatherScreen> {
             fontWeight: FontWeight.bold,
             foreground: Paint()
               ..shader = const LinearGradient(
-                colors: <Color>[
-                  Colors.white,
-                  Color(0xFFF0F4F7),
-                ], // Lighter gradient for softer background
+                colors: <Color>[Colors.white, Color(0xFFF0F4F7)], // Lighter gradient for softer background
               ).createShader(const Rect.fromLTWH(0.0, 0.0, 200.0, 70.0)),
           ),
         ),
         const SizedBox(height: 8),
-
+        
         // Description
         Text(
           _getWeatherDescription(weatherCode),
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w500,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w500),
         ),
         const SizedBox(height: 4),
 
@@ -699,9 +1043,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
           width: 50,
           height: 50,
           child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(
-              _calmAccentTeal,
-            ), // New calm accent
+            valueColor: AlwaysStoppedAnimation<Color>(_calmAccentTeal), // New calm accent
             strokeWidth: 4.0,
           ),
         ),
@@ -718,9 +1060,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.red.withValues(alpha: 0.2),
+        color: Colors.red.withOpacity(0.2),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        border: Border.all(color: Colors.red.withOpacity(0.3)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -734,16 +1076,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
           ElevatedButton(
             onPressed: _handleLocationClick,
             style: ElevatedButton.styleFrom(
-              backgroundColor:
-                  _calmDarkBlue, // Used a dark calm color for the button
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              backgroundColor: _calmDarkBlue, // Used a dark calm color for the button
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            child: const Text(
-              'Retry Location',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Retry Location', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -760,16 +1096,16 @@ class _WeatherScreenState extends State<WeatherScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.1), // Soft dark overlay
+          color: Colors.black.withOpacity(0.1), // Soft dark overlay
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.2),
+                color: iconColor.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(50),
               ),
               child: Icon(icon, size: 24, color: iconColor),
@@ -781,8 +1117,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 Text(
                   label.toUpperCase(),
                   style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
+                    color: Colors.white70, 
+                    fontSize: 12, 
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.5,
                   ),
@@ -791,8 +1127,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 Text(
                   value,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
+                    color: Colors.white, 
+                    fontSize: 18, 
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -803,12 +1139,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ),
     );
   }
-
+  
   // --- NEW: Daily Forecast Widget ---
   Widget _buildDailyForecast() {
-    if (_dailyForecast == null || _dailyForecast!.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    if (_dailyForecast == null || _dailyForecast!.isEmpty) return const SizedBox.shrink();
 
     // Skip the first day since it's the current day (covered by the main screen)
     final forecastList = _dailyForecast!.skip(1).toList();
@@ -829,7 +1163,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         ),
         // ListView.builder embedded in a fixed height container
         SizedBox(
-          height: 120,
+          height: 120, 
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: forecastList.length,
@@ -847,37 +1181,25 @@ class _WeatherScreenState extends State<WeatherScreen> {
                   width: 90,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.15),
+                    color: Colors.black.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.05),
-                    ),
+                    border: Border.all(color: Colors.white.withOpacity(0.05)),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       Text(
                         dayOfWeek,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
                       ),
                       Icon(
-                        _getWeatherIcon(
-                          weatherCode,
-                          1,
-                        ), // Assume daytime icon for forecast summary
-                        color: _calmIconYellow.withValues(alpha: 0.8),
+                        _getWeatherIcon(weatherCode, 1), // Assume daytime icon for forecast summary
+                        color: _calmIconYellow.withOpacity(0.8),
                         size: 32,
                       ),
                       Text(
                         '$maxTemp° / $minTemp°',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                        ),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16),
                       ),
                     ],
                   ),
