@@ -10,9 +10,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:calm_weather/main.dart';
 
 void main() {
-  testWidgets('WeatherApp renders WeatherScreen', (WidgetTester tester) async {
+  testWidgets('WeatherApp renders AuthScreen initially', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const WeatherApp());
 
-    expect(find.byType(WeatherScreen), findsOneWidget);
+    // Initially, user is not logged in, so AuthScreen should be shown
+    expect(find.byType(AuthScreen), findsOneWidget);
   });
 }
