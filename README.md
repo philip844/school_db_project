@@ -1,6 +1,6 @@
 Calm Weather Mobile App
 
-This is a modern, cross-platform mobile weather application built with Flutter (Dart). It provides users with current weather conditions, a 5-day forecast, and both automatic location detection (via GPS) and manual city search, all presented using a soothing, calm blue/teal color palette.
+This is a comprehensive, standalone mobile weather application built with Flutter (Dart). It provides real-time weather information and forecast data, secured by a custom authentication system that connects to a live backend database. The entire interface utilizes a calm, non-distracting blue/teal color palette.
 
 1. Key Components and Technologies
 
@@ -14,19 +14,31 @@ Framework
 
 Flutter (Dart)
 
-Provides the mobile application structure and UI rendering.
+Provides the cross-platform mobile application structure and UI.
+
+Backend/Database
+
+Firebase Core & Firestore
+
+Provides the live cloud database for securely storing user accounts.
+
+Persistence
+
+shared_preferences
+
+Stores the user's login state locally for automatic sign-in on relaunch.
 
 Geolocation
 
 geolocator
 
-Accesses the device's native GPS to get latitude and longitude.
+Accesses the device's native GPS for automatic location detection.
 
 Network Requests
 
 http
 
-Used for making API calls to external services.
+Used for making external API calls (Weather & Geocoding).
 
 Weather Data
 
@@ -34,35 +46,53 @@ Open-Meteo API
 
 Provides current weather conditions and forecast data.
 
-Location Naming
+2. Authentication and Security Features
 
-Nominatim (OpenStreetMap)
+The application requires users to create an account or log in before accessing weather features.
 
-Used for Forward Geocoding (converting a city name to coordinates) and Reverse Geocoding (converting coordinates to a city name).
+2.1. Account Creation (Sign Up)
 
-Date/Time Formatting
+The Sign Up process enforces strict security validation before saving credentials to the Firestore database:
 
-intl
+Email Validation: The email address must end with @gmail.com.
 
-Handles formatting for the real-time clock and forecast dates.
+Password Validation: Passwords must meet four minimum criteria:
 
-2. Core Features and Functionality
+Minimum length of 8 characters.
 
-The app is designed around providing a clear, intuitive user experience focused on essential weather data.
+Must contain at least one uppercase letter.
 
-2.1. Dynamic Data Display
+Must contain at least one number.
 
-Current Conditions: Displays temperature, wind speed, humidity, and "feels like" temperature.
+Must contain at least one special character (symbol).
 
-Time & Date: A real-time clock and current date are displayed at the top of the screen.
+2.2. User Persistence
 
-5-Day Forecast: A horizontally scrollable list at the bottom shows the daily high and low temperatures and general conditions for the next four days.
+Upon successful login or sign up, the application saves a local flag (shared_preferences) and the user's email. This allows the user to relaunch the app and skip the login screen automatically until they explicitly choose to log out.
 
-Thematic Design: The visual theme utilizes a calm, non-distracting gradient of soft blues and teals.
+2.3. Forgot Password Flow
 
-2.2. User Interaction
+The "Forgot Password?" link triggers a secure, 3-step modal dialog designed to simulate account recovery:
 
-The primary controls are managed by two Floating Action Buttons (FABs) located in the bottom right corner:
+Email Input: Prompts the user for their email address.
+
+Verification Code: Requires the user to enter a mock verification code (123456).
+
+New Password: Allows the user to set a simulated new password.
+
+3. Core Weather Functionality (Visible after Login)
+
+Once authenticated, the user gains access to the full WeatherScreen.
+
+3.1. Data Display
+
+Real-Time Clock: Displays the current time.
+
+Current Conditions: Temperature, wind speed, humidity, and "feels like" temperature.
+
+5-Day Forecast: A scrollable horizontal list showing daily high/low temperatures and conditions.
+
+3.2. User Controls
 
 Icon
 
@@ -70,39 +100,39 @@ Feature
 
 Function
 
+Logout (Red Exit)
+
+Sign Out
+
+Clears the local login state (shared_preferences) and immediately returns the user to the Login screen.
+
 Target (◎)
 
 Geolocation (Auto-Detect)
 
-Triggers the device's GPS to find the user's current latitude and longitude, then fetches and displays the weather for that exact location.
+Uses the device's GPS (geolocator) to find the exact current location and display its weather.
 
 Magnifying Glass (🔍)
 
 City Search (Manual)
 
-Toggles an input bar in the header. The user can type any city name, and the app uses Forward Geocoding to locate the city and retrieve its weather data.
+Toggles an input bar that allows the user to manually enter any city name and fetch its weather (Forward Geocoding).
 
-2.3. How the App Works (Data Flow)
+Eye Toggle
 
-Start-up: The app runs _handleLocationClick() to attempt automatic detection and display the local weather.
+Password Visibility
 
-Request Position: The _determinePosition() function uses the geolocator package to get the device's coordinates.
+Allows the user to show/hide the password text for verification during login/sign up.
 
-Fetch Data: The coordinates are sent to the Open-Meteo API via the http package, retrieving current weather components and the 5-day forecast.
+4. Installation and Deployment
 
-Name Lookup: The coordinates are also sent to the Nominatim service via _fetchLocationName (Reverse Geocoding) to display a human-readable city or town name.
+The application runs independently as a native Android app after compilation.
 
-Display: The UI updates with the location name, current weather, and the list of future forecasts.
+Android Release Build (Standalone APK)
 
-3. Installation and Deployment
-
-The application is designed to run independently as a native Android or iOS app.
-
-Android Release Build
-
-To generate the standalone, installable file, run the following command in the project root directory:
+To generate the final, installable file (.apk) that can be shared and run without the PC connection, run the following command in the project root directory:
 
 flutter build apk --release
 
 
-The final file, app-release.apk, will be found in the build/app/outputs/flutter-apk/ directory. This file can be shared and installed on any Android device without being connected to the PC.
+The compiled file (app-release.apk) will be found in the build/app/outputs/flutter-apk/ directory.
